@@ -63,7 +63,7 @@ defaultRules:
     kubeApiserverHistogram: true
     kubeApiserverSlos: true
     kubeControllerManager: true
-    kubelet: true
+    kubelet: false
     kubeProxy: true
     kubePrometheusGeneral: true
     kubePrometheusNodeRecording: true
@@ -192,7 +192,19 @@ defaultRules:
 #        rules:
 #        - record: my_record
 #          expr: 100 * my_record
-
+  additionalPrometheusRules:
+    - name: "test-rules"
+      groups:
+        - name: "TestAlerts"
+          rules:
+            - alert: "TestAlert"
+              expr: "vector(1)"  # 항상 true인 조건
+              for: "1m"
+              labels:
+                severity: "test"
+              annotations:
+                summary: "This is a test alert"
+                description: "This alert is a test to verify Discord integration"
 ## Provide custom recording or alerting rules to be deployed into the cluster.
 ##
 additionalPrometheusRulesMap: {}
@@ -331,17 +343,43 @@ alertmanager:
       - target_matchers:
           - 'alertname = InfoInhibitor'
     route:
-      group_by: ['namespace']
+      group_by: [ 'alertname']
       group_wait: 30s
       group_interval: 5m
       repeat_interval: 12h
       receiver: 'null'
       routes:
-      - receiver: 'null'
-        matchers:
-          - alertname = "Watchdog"
+        - receiver: 'null'
+          matchers:
+            - alertname = "Watchdog"
+        - receiver: discord-notifications  # Discord 알림을 위한 경로
+          matchers:
+            - severity = test
+            - alertname != "Watchdog"  # Discord에서 Watchdog 제외
+          group_wait: 10s
+          group_interval: 1m
+          repeat_interval: 1h
     receivers:
-    - name: 'null'
+      - name: 'null'
+      - name: discord-notifications
+        http_config:
+          headers:
+            Content-Type: application/json
+          follow_redirects: true
+          enable_http2: true
+        webhook_configs:
+          - channel: 'alerts'
+            icon_url: https://avatars3.githubusercontent.com/u/3380462
+            username: "Alert"
+            url: https://discord.com/api/webhooks/1304371010161872916/2d-v5-HmPZ5Hyvx9U63Fakj-NgpKlRgpRsq0tn5Mc-5aSgl7fO3Q1xpyUhkdD6jqtp9r
+            send_resolved: false  # 문제가 해결되었을 때 알림 전송
+            title: 'Demo Service Alert'            # 고정된 제목 텍스트
+            message: |
+              **Alert:** Demo Service Alert Triggered
+              **Severity:** Critical
+              **Description:** This is a fixed alert message for monitoring purposes.
+              **Summary:** Demo service has triggered a critical alert.
+              **Instance:** DemoInstance
     templates:
     - '/etc/alertmanager/config/*.tmpl'
 
@@ -571,7 +609,7 @@ alertmanager:
 
     ## Service type
     ##
-    type: ClusterIP
+    type: LoadBalancer
 
   ## Configuration for creating a separate Service for each statefulset Alertmanager replica
   ##
@@ -601,7 +639,7 @@ alertmanager:
 
     ## Service type
     ##
-    type: ClusterIP
+    type: LoadBalancer
 
   ## Configuration for creating a ServiceMonitor for AlertManager
   ##
@@ -795,7 +833,14 @@ alertmanager:
     ## Storage is the definition of how storage will be used by the Alertmanager instances.
     ## ref: https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/user-guides/storage.md
     ##
-    storage: {}
+    storage: 
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp2  # 사용할 StorageClass 지정
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 20Gi  # 원하는 스토리지 용량
     # volumeClaimTemplate:
     #   spec:
     #     storageClassName: gluster
@@ -1060,7 +1105,12 @@ grafana:
     # - secretName: grafana-general-tls
     #   hosts:
     #   - grafana.example.com
-
+  persistence:
+    enabled: true  # Persistent Volume 사용 여부
+    storageClassName: "gp2"  # 사용할 StorageClass 이름
+    accessModes:
+      - ReadWriteOnce  # 권한 설정 (필요에 따라 수정 가능)
+    size: 10Gi  # 스토리지 크기 설정
   # # To make Grafana persistent (Using Statefulset)
   # #
   # persistence:
@@ -1108,7 +1158,7 @@ grafana:
 
       ## URL of prometheus datasource
       ##
-      # url: http://prometheus-stack-prometheus:9090/
+      url: http://prometheus-stack-prometheus:9090/
 
       ## Prometheus request timeout in seconds
       # timeout: 30
@@ -1178,6 +1228,10 @@ grafana:
   ## Passed to grafana subchart and used by servicemonitor below
   ##
   service:
+    type: LoadBalancer  # LoadBalancer 유형으로 설정
+    port: 80  # 기본 포트 설정 (필요 시 변경 가능)
+    annotations: {}  # 필요한 경우 LoadBalancer에 추가할 주석 설정
+    
     portName: http-web
     ipFamilies: []
     ipFamilyPolicy: ""
@@ -3164,7 +3218,7 @@ prometheus:
 
     ## Service type
     ##
-    type: LoadBalancer
+    type: ClusterIP
 
     ## Port to expose on each node
     ##
@@ -3214,7 +3268,7 @@ prometheus:
 
     ## Service type
     ##
-    type: ClusterIP
+    type: LoadBalancer
 
     ## Additional ports to open for Prometheus service
     ##
@@ -3271,7 +3325,7 @@ prometheus:
 
     ## Service type
     ##
-    type: ClusterIP
+    type: LoadBalancer
 
     ## Service dual stack
     ##
@@ -3939,7 +3993,14 @@ prometheus:
     ## Prometheus StorageSpec for persistent data
     ## ref: https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/user-guides/storage.md
     ##
-    storageSpec: {}
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp2  # 사용할 StorageClass 지정
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 20Gi  # 원하는 스토리지 용량
     ## Using PersistentVolumeClaim
     ##
     #  volumeClaimTemplate:
@@ -3974,7 +4035,24 @@ prometheus:
     ## The scrape configuration example below will find master nodes, provided they have the name .*mst.*, relabel the
     ## port to 2379 and allow etcd scraping provided it is running on all Kubernetes master nodes
     ##
-    additionalScrapeConfigs: []
+    additionalScrapeConfigs: 
+      - job_name: 'kubernetes-spring'  # 잡 이름 설정
+        metrics_path: '/actuator/prometheus'  # 메트릭 경로
+        scheme: https  # HTTPS 설정
+        tls_config:
+    #      ca_file: ./cert/ca_bundle.crt
+    #      cert_file: ./cert/certificate.crt
+    #      key_file: ./cert/private.key
+          insecure_skip_verify: true
+        kubernetes_sd_configs:
+          - role: pod  # 파드 디스커버리
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_namespace]
+            action: keep
+            regex: "default" 
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: spring-boot  # 'spring-boot' 레이블이 있는 파드만 
     # - job_name: kube-etcd
     #   kubernetes_sd_configs:
     #     - role: node
@@ -4275,7 +4353,23 @@ prometheus:
   #      - nodes/proxy
   #    verbs: [ "get", "list", "watch" ]
 
-  additionalServiceMonitors: []
+  additionalServiceMonitors:
+    - name: spring-boot-servicemonitor
+      selector:
+        matchLabels:
+          app: spring-boot  # spring-boot 레이블을 가진 파드만 수집
+      namespaceSelector:
+        matchNames:
+          - default  # spring-boot 파드가 있는 대상 네임스페이스
+      endpoints:
+        - port: metrics  # 수집할 포트 이름 (서비스에 정의된 포트 이름과 일치해야 함)
+          path: /actuator/prometheus  # 메트릭 경로
+          interval: 30s  # 수집 간격
+          scheme: https  # HTTPS 설정
+          tlsConfig:
+            insecureSkipVerify: true  # TLS 인증서 검증 생략
+
+
   ## Name of the ServiceMonitor to create
   ##
   # - name: ""
@@ -4734,6 +4828,13 @@ thanosRuler:
     ## ref: https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/user-guides/storage.md
     ##
     storage: {}
+    volumeClaimTemplate:
+      spec:
+        storageClassName: gp2  # 사용할 StorageClass 지정
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi  # 원하는 스토리지 용량
     # volumeClaimTemplate:
     #   spec:
     #     storageClassName: gluster

@@ -1,0 +1,21 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: spring-boot-servicemonitor
+  namespace: monitoring  # Prometheus가 있는 네임스페이스
+  labels:
+    release: prometheus  # Prometheus Operator 설치 시 사용한 릴리스 이름과 일치해야 함
+spec:
+  selector:
+    matchLabels:
+      app: spring-boot  # spring-boot 레이블을 가진 파드만 수집
+  namespaceSelector:
+    matchNames:
+      - default  # 대상 네임스페이스
+  endpoints:
+    - port: metrics  # 수집할 포트 이름 (서비스에 정의된 포트 이름과 일치해야 함)
+      path: /actuator/prometheus  # 메트릭 경로
+      interval: 30s  # 수집 간격
+      scheme: https  # HTTPS 설정
+      tlsConfig:
+        insecureSkipVerify: true  # TLS 인증서 검증 생략
