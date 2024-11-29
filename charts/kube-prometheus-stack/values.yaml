@@ -318,6 +318,12 @@ alertmanager:
   ##
   config:
     global:
+      # smtp_smarthost: 'email.master-of-prediction.shop:587'  # SMTP 서버 주소와 포트
+      # smtp_from: 'admin@master-of-prediction.shop'                     # 발신자 이메일 주소
+      # smtp_auth_username: 'admin@master-of-prediction.shop'  # SMTP 사용자 이름
+      # smtp_auth_password: '1234'               # SMTP 비밀번호
+      # smtp_require_tls: false    
+      # insecure_skip_verify: true                             # TLS 사용 설정
       resolve_timeout: 5m
     inhibit_rules:
       - source_matchers:
@@ -352,34 +358,23 @@ alertmanager:
         - receiver: 'null'
           matchers:
             - alertname = "Watchdog"
-        - receiver: discord-notifications  # Discord 알림을 위한 경로
+        - receiver: email-notifications   # 이메일 알림을 위한 경로
           matchers:
-            - severity = test
-            - alertname != "Watchdog"  # Discord에서 Watchdog 제외
-          group_wait: 10s
-          group_interval: 1m
-          repeat_interval: 1h
+            - severity = critical
+            - alertname != "Watchdog"
     receivers:
       - name: 'null'
-      - name: discord-notifications
-        http_config:
-          headers:
-            Content-Type: application/json
-          follow_redirects: true
-          enable_http2: true
-        webhook_configs:
-          - channel: 'alerts'
-            icon_url: https://avatars3.githubusercontent.com/u/3380462
-            username: "Alert"
-            url: https://discord.com/api/webhooks/1304371010161872916/2d-v5-HmPZ5Hyvx9U63Fakj-NgpKlRgpRsq0tn5Mc-5aSgl7fO3Q1xpyUhkdD6jqtp9r
-            send_resolved: false  # 문제가 해결되었을 때 알림 전송
-            title: 'Demo Service Alert'            # 고정된 제목 텍스트
-            message: |
-              **Alert:** Demo Service Alert Triggered
-              **Severity:** Critical
-              **Description:** This is a fixed alert message for monitoring purposes.
-              **Summary:** Demo service has triggered a critical alert.
-              **Instance:** DemoInstance
+      - name: 'email-notifications'
+        email_configs:
+          - to: 'dudnjsckrgo@gmail.com'       # 수신자 이메일 주소
+            from: 'admin@master-of-prediction.shop'       # 발신자 이메일 주소
+            smarthost: 'email.master-of-prediction.shop:587'
+            auth_username: 'admin@master-of-prediction.shop'
+            auth_identity: 'admin@master-of-prediction.shop'
+            auth_password: '1234' # SMTP 비밀번호
+            require_tls: false
+            send_resolved: true     
+            insecure_skip_verify: true  # 인증서 검증을 건너뜁니다.
     templates:
     - '/etc/alertmanager/config/*.tmpl'
 
@@ -1037,11 +1032,46 @@ alertmanager:
 ## Using default values from https://github.com/grafana/helm-charts/blob/main/charts/grafana/values.yaml
 ##
 grafana:
+  # extraVolumes:
+  # - name: grafana-tls-secret
+  #   secret:
+  #     secretName: grafana-tls-secret
+  # ## Additional volume mounts
+  # ##
+  # extraVolumeMounts:
+  #   - name: grafana-tls-secret
+  #     mountPath: /etc/grafana/certs
+  #     readOnly: true
+  # extraSecretMounts:
+  # - name: grafana-tls
+  #   mountPath: /cert
+  #   secretName: grafana-tls-secret
+  #   readOnly: true
+  #   subPath: ""
+  extraEnv:
+    - name: GF_SMTP_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: smtp-secret   # Secret 이름
+          key: smtp-password  # Secret 키
   grafana.ini:
+    # smtp:
+    #   enabled: true
+    #   host: "email.master-of-prediction.shop:587"  # SMTP 서버 주소와 포트 (예: 587)
+    #   user: "admin@master-of-prediction.shop"            # SMTP 사용자 이름
+    #   from_address: "dudnjsckrgo@gmail.com"    # 발신자 이메일 주소
+    #   from_name: "Grafana"           
+    #   skip_verify: true          # 발신자 이름
+    # auth.anonymous:
+    #     enabled: true
     security:
       allow_embedding: true
     server:
-      root_url: "%(protocol)s://ae3ff225f79e74e12ac4c63cbdbf8579-602980979.ap-northeast-2.elb.amazonaws.com"
+      root_url:  "https://monitor.master-of-prediction.shop"
+      # cert_file: /cert/tls.crt
+      # cert_key: /cert/tls.key
+      protocol: https
+      http_port: 3000
   enabled: true
   namespaceOverride: ""
 
@@ -1076,19 +1106,20 @@ grafana:
   ingress:
     ## If true, Grafana Ingress will be created
     ##
-    enabled: false
+    enabled: true
 
     ## IngressClassName for Grafana Ingress.
     ## Should be provided if Ingress is enable.
     ##
-    # ingressClassName: nginx
+    ingressClassName: nginx 
+
 
     ## Annotations for Grafana Ingress
     ##
-    annotations: {}
-      # kubernetes.io/ingress.class: nginx
-      # kubernetes.io/tls-acme: "true"
-
+    annotations: 
+      kubernetes.io/ingress.class: nginx
+      kubernetes.io/tls-acme: "true"
+      cert-manager.io/cluster-issuer: "letsencrypt-prod"  # cert-manager를 사용하여 인증서 자동 발급 시
     ## Labels to be added to the Ingress
     ##
     labels: {}
@@ -1096,9 +1127,9 @@ grafana:
     ## Hostnames.
     ## Must be provided if Ingress is enable.
     ##
-    # hosts:
-    #   - grafana.domain.com
-    hosts: []
+    hosts:
+      - monitor.master-of-prediction.shop
+    # hosts: []
 
     ## Path for grafana ingress
     path: /
@@ -1106,10 +1137,10 @@ grafana:
     ## TLS configuration for grafana Ingress
     ## Secret must be manually created in the namespace
     ##
-    tls: []
-    # - secretName: grafana-general-tls
-    #   hosts:
-    #   - grafana.example.com
+    tls: 
+      - secretName: grafana-tls-secret
+        hosts:
+        - monitor.master-of-prediction.shop
   persistence:
     enabled: true  # Persistent Volume 사용 여부
     storageClassName: "gp2"  # 사용할 StorageClass 이름
@@ -1163,7 +1194,7 @@ grafana:
 
       ## URL of prometheus datasource
       ##
-      url: http://prometheus-stack-prometheus:9090/
+      url: http://afe883f7a1b834ed886ded6df2d68f97-1352383775.ap-northeast-2.elb.amazonaws.com:9090/
 
       ## Prometheus request timeout in seconds
       # timeout: 30
@@ -1233,8 +1264,8 @@ grafana:
   ## Passed to grafana subchart and used by servicemonitor below
   ##
   service:
-    type: LoadBalancer  # LoadBalancer 유형으로 설정
-    port: 80  # 기본 포트 설정 (필요 시 변경 가능)
+    type: LoadBalancer    # LoadBalancer 유형으로 설정
+    port: 3000  # 기본 포트 설정 (필요 시 변경 가능)
     annotations: {}  # 필요한 경우 LoadBalancer에 추가할 주석 설정
     
     portName: http-web
